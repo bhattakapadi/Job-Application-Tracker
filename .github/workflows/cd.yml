@@ -1,0 +1,24 @@
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to VM
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/Job-Application-Tracker
+            git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/bhattakapadi/Job-Application-Tracker.git
+            git pull origin main
+            docker compose down
+            docker compose up --build -d
+            
