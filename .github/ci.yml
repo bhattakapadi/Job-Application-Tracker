@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          npm install
+
+      - name: Build backend Docker image
+        run: docker build -t job-tracker-backend ./backend
+
+  build-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm install
+
+      - name: Build frontend Docker image
+        run: docker build -t job-tracker-frontend ./frontend
+
+  integration-test:
+    runs-on: ubuntu-latest
+    needs: [build-backend, build-frontend]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Start all containers
+        run: docker compose up -d --build
+
+      - name: Wait for services to be ready
+        run: sleep 30
+      
+      - name: Test POST new job
+        run: |
+          curl -X POST http://localhost:5000/api/jobs \
+          -F "company_name=TestCompany" \
+          -F "position=DevOps Engineer" \
+          -F "current_status=Applied"
+
+      - name: Test GET all jobs
+        run: curl http://localhost:5000/api/jobs
+
+      - name: Tear down containers
+        run: docker compose down
