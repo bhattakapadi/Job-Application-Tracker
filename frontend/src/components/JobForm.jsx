@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/jobs';
+const API_URL = '/api/jobs';
 
 function JobForm({ onJobAdded }) {
   const [formData, setFormData] = useState({
