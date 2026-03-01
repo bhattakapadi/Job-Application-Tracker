@@ -1,112 +1,184 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import axios from 'axios';
 
-const API_URL = '/api/jobs';
+const ALL_STATUSES = ['Applied', 'Interview', 'Offer', 'Rejected', 'Ghosted'];
 
-function JobForm({ onJobAdded }) {
-  const [formData, setFormData] = useState({
+const inputStyle = {
+  padding: '10px 14px',
+  border: '1.5px solid #e5e7eb',
+  borderRadius: 10,
+  fontSize: 14,
+  fontFamily: "'DM Sans', sans-serif",
+  outline: 'none',
+  color: '#111827',
+  background: '#fafaf8',
+  width: '100%',
+};
+
+const labelStyle = {
+  fontSize: 11,
+  fontWeight: 700,
+  color: '#6b7280',
+  textTransform: 'uppercase',
+  letterSpacing: '0.6px',
+};
+
+export default function JobForm({ token, onJobAdded, onCancel }) {
+  const [form, setForm] = useState({
     company_name: '',
     position: '',
     job_url: '',
     salary_wished: '',
     current_status: 'Applied',
   });
-
-  const [jobDescription, setJobDescription] = useState('');
-  const [motivationLetter, setMotivationLetter] = useState('');
-  const [cvFile, setCvFile] = useState(null);
-  const [jobDescFile, setJobDescFile] = useState(null);
-  const [motivationFile, setMotivationFile] = useState(null);
+  const [cvFile, setCvFile]         = useState(null);
+  const [coverFile, setCoverFile]   = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError]           = useState('');
+  const cvRef                       = useRef();
+  const coverRef                    = useRef();
 
   const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+    setForm({ ...form, [e.target.name]: e.target.value });
+    setError('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!form.company_name.trim()) { setError('Company name is required.'); return; }
+    setSubmitting(true);
+    setError('');
     try {
       const data = new FormData();
-      
-      // Append text fields
-      Object.keys(formData).forEach(key => data.append(key, formData[key]));
-      
-      // Append text or file for job description
-      if (jobDescFile) data.append('job_description', jobDescFile);
-      else data.append('job_description', jobDescription);
+      Object.entries(form).forEach(([k, v]) => data.append(k, v));
+      if (cvFile)    data.append('cv', cvFile);
+      if (coverFile) data.append('motivation_letter', coverFile);
 
-      // Append text or file for motivation letter
-      if (motivationFile) data.append('motivation_letter', motivationFile);
-      else data.append('motivation_letter', motivationLetter);
-
-      // Append CV file
-      if (cvFile) data.append('cv', cvFile);
-
-      await axios.post(API_URL, data);
-      alert('Job application added!');
-      onJobAdded(); // refresh the list
+      const res = await axios.post('/api/jobs', data, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' },
+      });
+      onJobAdded(res.data);
+      setForm({ company_name: '', position: '', job_url: '', salary_wished: '', current_status: 'Applied' });
+      setCvFile(null); setCoverFile(null);
+      if (cvRef.current)    cvRef.current.value = '';
+      if (coverRef.current) coverRef.current.value = '';
     } catch (err) {
-      console.error(err);
-      alert('Something went wrong!');
+      setError(err.response?.data?.error || 'Failed to save. Please try again.');
+    } finally {
+      setSubmitting(false);
     }
   };
 
+  const FileUpload = ({ label, icon, file, setFile, inputRef, accept }) => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <label style={labelStyle}>{label}</label>
+      <label style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '10px 14px',
+        border: `1.5px dashed ${file ? '#3b82f6' : '#e5e7eb'}`,
+        borderRadius: 10, cursor: 'pointer',
+        background: file ? '#eff6ff' : '#fafaf8',
+        color: file ? '#1d4ed8' : '#9ca3af',
+        fontSize: 13, transition: 'all 0.2s',
+      }}>
+        <span style={{ fontSize: 16, flexShrink: 0 }}>{icon}</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+          {file ? file.name : `Upload ${label}`}
+        </span>
+        <input ref={inputRef} type="file" accept={accept} style={{ display: 'none' }}
+          onChange={e => setFile(e.target.files[0] || null)} />
+      </label>
+      {file && (
+        <button type="button"
+          onClick={() => { setFile(null); inputRef.current.value = ''; }}
+          style={{ fontSize: 11, color: '#ef4444', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', padding: 0 }}>
+          ✕ Remove
+        </button>
+      )}
+    </div>
+  );
+
   return (
-    <form onSubmit={handleSubmit} style={{ marginBottom: '2rem' }}>
-      <h2>Add Job Application</h2>
+    <div style={{
+      background: '#fff', borderRadius: 16, padding: '28px 32px',
+      border: '1px solid #ede9e3', boxShadow: '0 8px 32px rgba(0,0,0,0.06)',
+      animation: 'fadeUp 0.3s ease both',
+    }}>
+      <h3 style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, color: '#111827', marginBottom: 24, fontWeight: 700 }}>
+        New Application
+      </h3>
 
-      <div>
-        <label>Company Name *</label><br />
-        <input name="company_name" value={formData.company_name} onChange={handleChange} required />
-      </div>
+      <form onSubmit={handleSubmit}>
+        {/* Company + Position */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={labelStyle}>Company Name *</label>
+            <input name="company_name" type="text" placeholder="Google"
+              value={form.company_name} onChange={handleChange} style={inputStyle} required />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={labelStyle}>Position</label>
+            <input name="position" type="text" placeholder="Software Engineer"
+              value={form.position} onChange={handleChange} style={inputStyle} />
+          </div>
+        </div>
 
-      <div>
-        <label>Position</label><br />
-        <input name="position" value={formData.position} onChange={handleChange} />
-      </div>
+        {/* URL + Salary */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={labelStyle}>Job URL</label>
+            <input name="job_url" type="url" placeholder="https://..."
+              value={form.job_url} onChange={handleChange} style={inputStyle} />
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={labelStyle}>Salary Expectation</label>
+            <input name="salary_wished" type="text" placeholder="€60,000"
+              value={form.salary_wished} onChange={handleChange} style={inputStyle} />
+          </div>
+        </div>
 
-      <div>
-        <label>Job URL</label><br />
-        <input name="job_url" value={formData.job_url} onChange={handleChange} />
-      </div>
+        {/* CV + Cover Letter + Status */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16, marginBottom: 20 }}>
+          <FileUpload label="CV / Resume" icon="📄" file={cvFile}
+            setFile={setCvFile} inputRef={cvRef} accept=".pdf,.doc,.docx" />
+          <FileUpload label="Cover Letter" icon="✉️" file={coverFile}
+            setFile={setCoverFile} inputRef={coverRef} accept=".pdf,.doc,.docx" />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <label style={labelStyle}>Status</label>
+            <select name="current_status" value={form.current_status}
+              onChange={handleChange} style={{ ...inputStyle, cursor: 'pointer' }}>
+              {ALL_STATUSES.map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+        </div>
 
-      <div>
-        <label>Salary Wished</label><br />
-        <input name="salary_wished" value={formData.salary_wished} onChange={handleChange} />
-      </div>
+        {error && (
+          <div style={{
+            padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca',
+            borderRadius: 8, fontSize: 13, color: '#dc2626', marginBottom: 16,
+          }}>
+            {error}
+          </div>
+        )}
 
-      <div>
-        <label>Status</label><br />
-        <select name="current_status" value={formData.current_status} onChange={handleChange}>
-          <option>Applied</option>
-          <option>Interview</option>
-          <option>Offer</option>
-          <option>Rejected</option>
-        </select>
-      </div>
-
-      <div>
-        <label>Job Description (text or PDF)</label><br />
-        <textarea value={jobDescription} onChange={e => setJobDescription(e.target.value)} rows={3} placeholder="Paste job description here..." />
-        <br />
-        <input type="file" accept=".pdf" onChange={e => setJobDescFile(e.target.files[0])} />
-      </div>
-
-      <div>
-        <label>Motivation Letter (text or PDF)</label><br />
-        <textarea value={motivationLetter} onChange={e => setMotivationLetter(e.target.value)} rows={3} placeholder="Paste motivation letter here..." />
-        <br />
-        <input type="file" accept=".pdf" onChange={e => setMotivationFile(e.target.files[0])} />
-      </div>
-
-      <div>
-        <label>CV (PDF)</label><br />
-        <input type="file" accept=".pdf" onChange={e => setCvFile(e.target.files[0])} />
-      </div>
-
-      <br />
-      <button type="submit">Submit Application</button>
-    </form>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+          <button type="button" onClick={onCancel} style={{
+            padding: '10px 20px', background: 'transparent',
+            border: '1.5px solid #e5e7eb', borderRadius: 10,
+            fontSize: 14, fontWeight: 500, cursor: 'pointer',
+            fontFamily: 'inherit', color: '#6b7280',
+          }}>
+            Cancel
+          </button>
+          <button type="submit" disabled={submitting} style={{
+            padding: '10px 28px', background: '#111827', color: '#fff',
+            border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600,
+            cursor: 'pointer', fontFamily: 'inherit', opacity: submitting ? 0.6 : 1,
+          }}>
+            {submitting ? 'Saving...' : 'Save Application'}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
-
-export default JobForm;
