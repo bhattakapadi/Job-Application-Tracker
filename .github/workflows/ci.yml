@@ -19,9 +19,7 @@ jobs:
           node-version: 18
 
       - name: Install backend dependencies
-        run: |
-          cd backend
-          npm install
+        run: cd backend && npm install
 
       - name: Build backend Docker image
         run: docker build -t job-tracker-backend ./backend
@@ -38,9 +36,7 @@ jobs:
           node-version: 20
 
       - name: Install frontend dependencies
-        run: |
-          cd frontend
-          npm install
+        run: cd frontend && npm install
 
       - name: Build frontend Docker image
         run: docker build -t job-tracker-frontend ./frontend
@@ -48,25 +44,144 @@ jobs:
   integration-test:
     runs-on: ubuntu-latest
     needs: [build-backend, build-frontend]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
+      - name: Create backend .env for CI
+        run: echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" > backend/.env
+
       - name: Start all containers
         run: docker compose up -d --build
 
-      - name: Wait for services to be ready
-        run: sleep 30
-      
-      - name: Test POST new job
+      - name: Wait for backend to be ready
         run: |
-          curl -X POST http://localhost:5000/api/jobs \
-          -F "company_name=TestCompany" \
-          -F "position=DevOps Engineer" \
-          -F "current_status=Applied"
+          echo "Waiting for backend..."
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:5000/health; then
+              echo "Backend is up!"
+              break
+            fi
+            echo "Attempt $i — retrying in 3s..."
+            sleep 3
+          done
 
-      - name: Test GET all jobs
-        run: curl http://localhost:5000/api/jobs
+      # ── Auth Tests ──────────────────────────────────────────
+
+      - name: Test health check
+        run: |
+          RESPONSE=$(curl -sf http://localhost:5000/health)
+          echo "Health: $RESPONSE"
+
+      - name: Test register new user
+        run: |
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"name":"CI User","email":"ci@test.com","password":"password123"}')
+          echo "Register response: $RESPONSE"
+          # Fail if no token in response
+          echo $RESPONSE | grep -q "token" || (echo "ERROR: No token in register response" && exit 1)
+
+      - name: Test login and capture token
+        run: |
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci@test.com","password":"password123"}')
+          echo "Login response: $RESPONSE"
+          echo $RESPONSE | grep -q "token" || (echo "ERROR: No token in login response" && exit 1)
+          # Extract token and save for next steps
+          TOKEN=$(echo $RESPONSE | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+
+      - name: Test blocked access without token
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/jobs)
+          echo "Status without token: $STATUS"
+          [ "$STATUS" = "401" ] || (echo "ERROR: Expected 401, got $STATUS" && exit 1)
+
+      # ── Jobs Tests (authenticated) ───────────────────────────
+
+      - name: Test create job with token
+        run: |
+          RESPONSE=$(curl -s -X POST http://localhost:5000/api/jobs \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -d '{"company_name":"TestCompany","position":"DevOps Engineer","current_status":"Applied"}')
+          echo "Create job response: $RESPONSE"
+          echo $RESPONSE | grep -q "TestCompany" || (echo "ERROR: Job not created" && exit 1)
+          # Save job ID for later tests
+          JOB_ID=$(echo $RESPONSE | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "JOB_ID=$JOB_ID" >> $GITHUB_ENV
+
+      - name: Test get all jobs with token
+        run: |
+          RESPONSE=$(curl -s http://localhost:5000/api/jobs \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Get all jobs: $RESPONSE"
+          echo $RESPONSE | grep -q "TestCompany" || (echo "ERROR: Job not found in list" && exit 1)
+
+      - name: Test get single job with token
+        run: |
+          RESPONSE=$(curl -s http://localhost:5000/api/jobs/$JOB_ID \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Get single job: $RESPONSE"
+          echo $RESPONSE | grep -q "TestCompany" || (echo "ERROR: Single job not found" && exit 1)
+
+      - name: Test update job status with token
+        run: |
+          RESPONSE=$(curl -s -X PUT http://localhost:5000/api/jobs/$JOB_ID \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $TOKEN" \
+            -d '{"current_status":"Interview"}')
+          echo "Update job: $RESPONSE"
+          echo $RESPONSE | grep -q "Interview" || (echo "ERROR: Status not updated" && exit 1)
+
+      # ── Security Tests ───────────────────────────────────────
+
+      - name: Test second user cannot access first user jobs
+        run: |
+          # Register second user
+          REG=$(curl -s -X POST http://localhost:5000/api/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"name":"Hacker","email":"hacker@test.com","password":"password123"}')
+          HACKER_TOKEN=$(echo $REG | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+          # Try to delete first user's job with second user's token
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            http://localhost:5000/api/jobs/$JOB_ID \
+            -H "Authorization: Bearer $HACKER_TOKEN")
+          echo "Hacker delete status: $STATUS"
+          [ "$STATUS" = "404" ] || (echo "ERROR: Security breach! Expected 404, got $STATUS" && exit 1)
+
+      - name: Test delete job with correct token
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X DELETE \
+            http://localhost:5000/api/jobs/$JOB_ID \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Delete status: $STATUS"
+          [ "$STATUS" = "200" ] || (echo "ERROR: Delete failed, got $STATUS" && exit 1)
+
+      - name: Test duplicate email registration
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            http://localhost:5000/api/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"name":"CI User","email":"ci@test.com","password":"password123"}')
+          echo "Duplicate register status: $STATUS"
+          [ "$STATUS" = "409" ] || (echo "ERROR: Expected 409 conflict, got $STATUS" && exit 1)
+
+      - name: Test wrong password login
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            http://localhost:5000/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci@test.com","password":"wrongpassword"}')
+          echo "Wrong password status: $STATUS"
+          [ "$STATUS" = "401" ] || (echo "ERROR: Expected 401, got $STATUS" && exit 1)
+
+      # ── Teardown ─────────────────────────────────────────────
 
       - name: Tear down containers
-        run: docker compose down
+        if: always()
+        run: docker compose down -v

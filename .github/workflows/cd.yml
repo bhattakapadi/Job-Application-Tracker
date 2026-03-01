@@ -7,7 +7,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Deploy to VM
         uses: appleboy/ssh-action@v1.0.0
@@ -17,8 +16,14 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
             cd ~/Job-Application-Tracker
+
+            # Pull latest code
             git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/bhattakapadi/Job-Application-Tracker.git
             git pull origin main
+
+            # Write .env file with secrets (overwrites on every deploy)
+            echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" > backend/.env
+
+            # Restart containers
             docker compose down
             docker compose up --build -d
-            

@@ -1,7 +1,3 @@
-import { useState } from 'react';
-import JobForm from './components/JobForm';
-import JobList from './components/JobList';
-
 /* recap:
   refresh : piece of state
   setRefresh: function that changes the state
@@ -10,20 +6,51 @@ import JobList from './components/JobList';
   on that state
 
 */
-function App() {
-  const [refresh, setRefresh] = useState(0);
+import { useState, useEffect } from 'react';
+import AuthPage from './components/AuthPage';
+import Dashboard from './components/Dashboard';
 
-  const handleJobAdded = () => {
-    setRefresh(prev => prev + 1);
+function App() {
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  // Restore session on page reload
+  useEffect(() => {
+    const savedToken = localStorage.getItem('token');
+    const savedUser  = localStorage.getItem('user');
+    if (savedToken && savedUser) {
+      try {
+        setToken(savedToken);
+        setUser(JSON.parse(savedUser));
+      } catch {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      }
+    }
+    setLoading(false);
+  }, []);
+
+  const handleLogin = (userData, userToken) => {
+    localStorage.setItem('token', userToken);
+    localStorage.setItem('user', JSON.stringify(userData));
+    setToken(userToken);
+    setUser(userData);
   };
 
-  return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '2rem' }}>
-      <h1>Job Application Tracker</h1>
-      <JobForm onJobAdded={handleJobAdded} />
-      <JobList refresh={refresh} />
-    </div>
-  );
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    setToken(null);
+    setUser(null);
+  };
+
+  // Avoid flash of login page on reload
+  if (loading) return null;
+
+  if (!user) return <AuthPage onLogin={handleLogin} />;
+
+  return <Dashboard user={user} token={token} onLogout={handleLogout} />;
 }
 
 export default App;
